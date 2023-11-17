@@ -112,17 +112,27 @@ namespace OBSPlugin
 
             if (ImGui.Begin("OBS Plugin Config", ref configOpen))
             {
-                IsVisible = configOpen;
-                using var tabBar = ImRaii.TabBar("TabBar");
-                if (!tabBar) return;
-                
-                this.DrawConnectionSettingsTab();
-                this.DrawStreamTab();
-                this.DrawRecordTab();
-                this.DrawBlurSettingsTab();
-                this.DrawAboutTab();
-                
-                ImGui.End();
+                try
+                {
+                    this.IsVisible = configOpen;
+                    using var tabBar = ImRaii.TabBar("TabBar");
+                    if (!tabBar) return;
+
+                    this.DrawConnectionSettingsTab();
+                    this.DrawStreamTab();
+                    this.DrawRecordTab();
+                    this.DrawBlurSettingsTab();
+                    this.DrawAboutTab();
+                }
+                catch (Exception e)
+                {
+                    PluginLog.Error("Unhandled exception while drawing UI: {0}", e);
+                    throw;
+                }
+                finally
+                {
+                    ImGui.End();
+                }
             }
 
         }
