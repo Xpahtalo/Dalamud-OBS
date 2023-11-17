@@ -66,7 +66,7 @@ namespace OBSPlugin
             });
 
         }
-        
+
         private void InitRemoveConsuming()
         {
             Task.Run(() =>
@@ -108,58 +108,19 @@ namespace OBSPlugin
 
             ImGui.SetNextWindowSize(new Vector2(530, 450), ImGuiCond.FirstUseEver);
             bool configOpen = IsVisible;
+
             if (ImGui.Begin("OBS Plugin Config", ref configOpen))
             {
                 IsVisible = configOpen;
-                if (ImGui.BeginTabBar("TabBar"))
-                {
-                    if (ImGui.BeginTabItem("Connection##Tab"))
-                    {
-                        if (ImGui.BeginChild("Connection##SettingsRegion"))
-                        {
-                            DrawConnectionSettings();
-                            ImGui.EndChild();
-                        }
-                        ImGui.EndTabItem();
-                    }
-                    if (ImGui.BeginTabItem("Stream##Tab"))
-                    {
-                        if (ImGui.BeginChild("Stream##SettingsRegion"))
-                        {
-                            DrawStream();
-                            ImGui.EndChild();
-                        }
-                        ImGui.EndTabItem();
-                    }
-                    if (ImGui.BeginTabItem("Record##Tab"))
-                    {
-                        if (ImGui.BeginChild("Record##SettingsRegion"))
-                        {
-                            DrawRecord();
-                            ImGui.EndChild();
-                        }
-                        ImGui.EndTabItem();
-                    }
-                    if (ImGui.BeginTabItem("Blur##Tab"))
-                    {
-                        if (ImGui.BeginChild("Blur##SettingsRegion"))
-                        {
-                            DrawBlurSettings();
-                            ImGui.EndChild();
-                        }
-                        ImGui.EndTabItem();
-                    }
-                    if (ImGui.BeginTabItem("About##Tab"))
-                    {
-                        if (ImGui.BeginChild("Blur##SettingsRegion"))
-                        {
-                            DrawAbout();
-                            ImGui.EndChild();
-                        }
-                        ImGui.EndTabItem();
-                    }
-                    ImGui.EndTabBar();
-                }
+                using var tabBar = ImRaii.TabBar("TabBar");
+                if (!tabBar) return;
+                
+                this.DrawConnectionSettingsTab();
+                this.DrawStreamTab();
+                this.DrawRecordTab();
+                this.DrawBlurSettingsTab();
+                this.DrawAboutTab();
+                
                 ImGui.End();
             }
 
@@ -784,8 +745,13 @@ namespace OBSPlugin
             UpdateBlur(GetBlurFromNode(childNode, addonName));
         }
 
-        private void DrawConnectionSettings()
+        private void DrawConnectionSettingsTab()
         {
+            using var tab = ImRaii.TabItem("Connection##Tab");
+            if (!tab) return;
+            using var child = ImRaii.Child("Connection##SettingsRegion");
+            if (!child) return;
+
             if (ImGui.Checkbox("Enabled", ref Config.Enabled))
             {
                 Config.Save();
@@ -820,8 +786,13 @@ namespace OBSPlugin
             }
         }
 
-        private void DrawBlurSettings()
+        private void DrawBlurSettingsTab()
         {
+            using var tab = ImRaii.TabItem("Blur##Tab");
+            if (!tab) return;
+            using var child = ImRaii.Child("Blur##SettingsRegion");
+            if (!child) return;
+
             if (ImGui.Checkbox("UI Detection", ref Config.UIDetection))
             {
                 UIErrorCount = 0;
@@ -1057,11 +1028,16 @@ namespace OBSPlugin
 
         }
 
-        private void DrawAbout()
+        private void DrawAboutTab()
         {
+            using var tab = ImRaii.TabItem("About##Tab");
+            if (!tab) return;
+            using var child = ImRaii.Child("About##SettingsRegion");
+            if (!child) return;
+
             // ImGui.Text("This plugin is still WIP, lot of functions are still in development.");
 
-            ImGui.Text("You need to install two plugins in your OBS for this plugin to work."); 
+            ImGui.Text("You need to install two plugins in your OBS for this plugin to work.");
 
             ImGui.Separator();
 
@@ -1176,8 +1152,13 @@ namespace OBSPlugin
 
         }
 
-        private void DrawStream()
+        private void DrawStreamTab()
         {
+            using var tab = ImRaii.TabItem("Stream##Tab");
+            if (!tab) return;
+            using var child = ImRaii.Child("Stream##SettingsRegion");
+            if (!child) return;
+
             string obsButtonText;
 
             switch (this.Obs.StreamState)
@@ -1223,8 +1204,12 @@ namespace OBSPlugin
             ImGui.Text($"Total frames : {this.Obs.StreamStatus.TotalFrames}");
         }
 
-        private void DrawRecord()
+        private void DrawRecordTab()
         {
+            using var tab = ImRaii.TabItem("Record##Tab");
+            if (!tab) return;
+            using var child = ImRaii.Child("Record##SettingsRegion");
+            if (!child) return;
 
             var obsButtonText = this.Obs.RecordState switch
             {
@@ -1238,7 +1223,7 @@ namespace OBSPlugin
             if (ImGui.Button(obsButtonText))
             {
                 if (!this.Obs.IsConnected) return;
-                
+
                 Plugin.SetRecordingInformation();
                 this.Obs.TryToggleRecording();
             }
