@@ -1,4 +1,5 @@
 ﻿using Dalamud.Plugin.Services;
+using Dalamud.Interface.Utility.Raii;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using ImGuiNET;
 using Newtonsoft.Json.Linq;
