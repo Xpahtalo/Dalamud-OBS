@@ -12,14 +12,14 @@ using System.Numerics;
 using System.Linq;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
-using Lumina.Excel.GeneratedSheets;
-using System.IO;
 
 namespace OBSPlugin
 {
     public class PluginUI
     {
         private readonly Plugin Plugin;
+        private IPluginLog PluginLog => Plugin.PluginLog;
+        private ObsService Obs => this.Plugin.ObsService;
         private bool isThreadRunning = true;
         internal BlockingCollection<Blur> BlurItemsToAdd = new(10000);
         internal BlockingCollection<Blur> BlurItemsToRemove = new(10000);
@@ -62,29 +62,30 @@ namespace OBSPlugin
                         OBSAddOrUpdateBlur(blur);
                     }
                 }
-                Plugin.PluginLog.Information("No more OBS blurs to add.");
+                PluginLog.Information("No more OBS blurs to add.");
             });
 
         }
+        
         private void InitRemoveConsuming()
         {
             Task.Run(() =>
             {
-                while (!BlurItemsToRemove.IsCompleted && isThreadRunning)
+                while (!this.BlurItemsToRemove.IsCompleted && this.isThreadRunning)
                 {
                     Blur blur = null;
                     try
                     {
-                        blur = BlurItemsToRemove.Take();
+                        blur = this.BlurItemsToRemove.Take();
                     }
                     catch (InvalidOperationException) { }
 
                     if (blur != null)
                     {
-                        OBSRemoveBlur(blur);
+                        this.Obs.TryRemoveFilterFromSource(this.Config.SourceName, blur.Name);
                     }
                 }
-                Plugin.PluginLog.Information("No more OBS blurs to add.");
+                this.PluginLog.Information("No more OBS blurs to add.");
             });
         }
 
@@ -96,7 +97,7 @@ namespace OBSPlugin
             }
             catch (Exception e)
             {
-                Plugin.PluginLog.Error("Error at updating stopwatch: {0}", e);
+                PluginLog.Error("Error at updating stopwatch: {0}", e);
             }
 
             if (Config.UIDetection)
@@ -178,7 +179,7 @@ namespace OBSPlugin
 
         private bool OBSAddOrUpdateBlur(Blur blur)
         {
-            if (!Plugin.Connected) return false;
+            if (!this.Obs.IsConnected) return false;
 
             string sourceName = Config.SourceName;
             try
@@ -188,7 +189,7 @@ namespace OBSPlugin
                 bool created = false;
                 try
                 {
-                    filter = Plugin.obs.GetSourceFilterInfo(sourceName, blur.Name);
+                    filter = this.Obs.GetSourceFilterInfo(sourceName, blur.Name);
                     settings = filter.Settings;
                 }
                 catch
@@ -218,13 +219,13 @@ namespace OBSPlugin
 
                 if (created)
                 {
-                    Plugin.obs.AddFilterToSource(sourceName, blur.Name, "obs_composite_blur", settings);
+                    Obs.AddFilterToSource(sourceName, blur.Name, "obs_composite_blur", settings);
                 }
                 else
                 {
-                    Plugin.obs.SetSourceFilterSettings(sourceName, blur.Name, settings);
+                    Obs.SetSourceFilterSettings(sourceName, blur.Name, settings);
                 }
-                Plugin.obs.SetSourceFilterVisibility(sourceName, blur.Name, blur.Enabled);
+                Obs.SetSourceFilterVisibility(sourceName, blur.Name, blur.Enabled);
             }
             catch (ErrorResponseException e)
             {
@@ -232,7 +233,7 @@ namespace OBSPlugin
                 {
                     Config.UIDetection = false;
                     var errMsg = $"Cannot find source \"{Config.SourceName}\", please check.";
-                    Plugin.PluginLog.Error(errMsg);
+                    PluginLog.Error(errMsg);
                     Plugin.Chat.PrintError($"[OBSPlugin] {errMsg}");
                     Config.Save();
                 }
@@ -240,57 +241,22 @@ namespace OBSPlugin
             }
             catch (Exception e)
             {
-                Plugin.PluginLog.Error("Failed updating blur: {0}", e);
+                PluginLog.Error("Failed updating blur: {0}", e);
                 return false;
             }
-            Plugin.PluginLog.Debug("Updated blur: {0}", blur.Name);
+            PluginLog.Debug("Updated blur: {0}", blur.Name);
             return true;
-        }
-
-        private bool OBSRemoveBlur(Blur blur)
-        {
-            if (!Plugin.Connected) return false;
-            bool removed;
-            try
-            {
-                removed = Plugin.obs.RemoveFilterFromSource(Config.SourceName, blur.Name);
-                Plugin.PluginLog.Debug("Deleted blur: {0}", blur.Name);
-            }
-            catch (Exception e)
-            {
-                Plugin.PluginLog.Error("Failed deleting blur: {0}", e);
-                return false;
-            }
-            return removed;
         }
 
         private bool OBSRemoveBlurs(string blurNamePrefix)
         {
-            if (!Plugin.Connected) return false;
-            try
-            {
-                var filters = Plugin.obs.GetSourceFilters(Config.SourceName);
-                foreach (var filter in filters)
-                {
-                    if (filter.Name.StartsWith(blurNamePrefix))
-                    {
-                        Plugin.obs.RemoveFilterFromSource(Config.SourceName, filter.Name);
-                    }
-                }
-                Plugin.PluginLog.Debug("Deleted all blurs starting with {0}", blurNamePrefix);
-            }
-            catch (Exception e)
-            {
-                Plugin.PluginLog.Error("Failed deleting blurs: {0}", e);
-                return false;
-            }
-            return true;
+            return Obs.RemoveFiltersWithPrefixFromSource(Config.SourceName, blurNamePrefix);
         }
 
         internal unsafe void UpdateGameUI()
         {
             if (!Config.Enabled) return;
-            if (!Plugin.Connected) return;
+            if (!this.Obs.IsConnected) return;
             if (Plugin.ClientState.LocalPlayer == null) return;
             try
             {
@@ -298,7 +264,7 @@ namespace OBSPlugin
             }
             catch (Exception e)
             {
-                Plugin.PluginLog.Error("Error Updating ChatLog UI: {0}", e);
+                PluginLog.Error("Error Updating ChatLog UI: {0}", e);
                 Config.ChatLogBlur = false;
                 UIErrorCount++;
                 Config.Save();
@@ -309,7 +275,7 @@ namespace OBSPlugin
             }
             catch (Exception e)
             {
-                Plugin.PluginLog.Error("Error Updating PartyList UI: {0}", e);
+                PluginLog.Error("Error Updating PartyList UI: {0}", e);
                 Config.PartyListBlur = false;
                 UIErrorCount++;
                 Config.Save();
@@ -320,7 +286,7 @@ namespace OBSPlugin
             }
             catch (Exception e)
             {
-                Plugin.PluginLog.Error("Error Updating Target UI: {0}", e);
+                PluginLog.Error("Error Updating Target UI: {0}", e);
                 Config.TargetBlur = false;
                 Config.TargetTargetBlur = false;
                 UIErrorCount++;
@@ -332,7 +298,7 @@ namespace OBSPlugin
             }
             catch (Exception e)
             {
-                Plugin.PluginLog.Error("Error Updating FocusTarget UI: {0}", e);
+                PluginLog.Error("Error Updating FocusTarget UI: {0}", e);
                 Config.FocusTargetBlur = false;
                 UIErrorCount++;
                 Config.Save();
@@ -343,7 +309,7 @@ namespace OBSPlugin
             }
             catch (Exception e)
             {
-                Plugin.PluginLog.Error("Error Updating NamePlate UI: {0}", e);
+                PluginLog.Error("Error Updating NamePlate UI: {0}", e);
                 Config.NamePlateBlur = false;
                 UIErrorCount++;
                 Config.Save();
@@ -354,7 +320,7 @@ namespace OBSPlugin
             }
             catch (Exception e)
             {
-                Plugin.PluginLog.Error("Error Updating Character UI: {0}", e);
+                PluginLog.Error("Error Updating Character UI: {0}", e);
                 Config.CharacterBlur = false;
                 UIErrorCount++;
                 Config.Save();
@@ -365,7 +331,7 @@ namespace OBSPlugin
             }
             catch (Exception e)
             {
-                Plugin.PluginLog.Error("Error Updating FriendList UI: {0}", e);
+                PluginLog.Error("Error Updating FriendList UI: {0}", e);
                 Config.FriendListBlur = false;
                 UIErrorCount++;
                 Config.Save();
@@ -376,7 +342,7 @@ namespace OBSPlugin
             }
             catch (Exception e)
             {
-                Plugin.PluginLog.Error("Error Updating Hotbar UI: {0}", e);
+                PluginLog.Error("Error Updating Hotbar UI: {0}", e);
                 Config.HotbarBlur = false;
                 UIErrorCount++;
                 Config.Save();
@@ -387,7 +353,7 @@ namespace OBSPlugin
             }
             catch (Exception e)
             {
-                Plugin.PluginLog.Error("Error Updating CastBar UI: {0}", e);
+                PluginLog.Error("Error Updating CastBar UI: {0}", e);
                 Config.CastBarBlur = false;
                 UIErrorCount++;
                 Config.Save();
@@ -396,7 +362,7 @@ namespace OBSPlugin
             {
                 var errMsg = "More than 1000 UI errors encountered, UI detection is turned off. " +
                     "Please open /xllog for more details.";
-                Plugin.PluginLog.Error(errMsg);
+                PluginLog.Error(errMsg);
                 Plugin.Chat.PrintError($"[OBSPlugin] {errMsg}");
                 Config.UIDetection = false;
                 Config.Save();
@@ -796,6 +762,7 @@ namespace OBSPlugin
                 UpdateBlur(GetBlurFromNode(childNode, $"Hotbar{suffix}"));
             }
         }
+        
         private unsafe void UpdateCastBar()
         {
             if (!Config.CastBarBlur) return;
@@ -824,8 +791,8 @@ namespace OBSPlugin
                 Config.Save();
             }
             ImGui.SameLine(ImGui.GetColumnWidth() - 80);
-            ImGui.TextColored(Plugin.Connected ? new(0, 1, 0, 1) : new(1, 0, 0, 1),
-                Plugin.Connected ? "Connected" : "Disconnected");
+            ImGui.TextColored(this.Obs.IsConnected ? new(0, 1, 0, 1) : new(1, 0, 0, 1),
+                this.Obs.IsConnected ? "Connected" : "Disconnected");
             if (ImGui.InputText("Server Address", ref Config.Address, 128))
             {
                 Config.Save();
@@ -834,12 +801,12 @@ namespace OBSPlugin
             {
                 Config.Save();
             }
-            string connectionButtonText = Plugin.Connected ? "Disconnect" : "Connect";
+            string connectionButtonText = this.Obs.IsConnected ? "Disconnect" : "Connect";
             if (ImGui.Button(connectionButtonText))
             {
-                if (Plugin.Connected)
+                if (this.Obs.IsConnected)
                 {
-                    Plugin.obs.Disconnect();
+                    this.Obs.TryDisconnect();
                 }
                 else
                 {
@@ -899,31 +866,31 @@ namespace OBSPlugin
                     if (BlurDict.TryGetValue("ChatLog", out chatLogBlur))
                     {
                         chatLogBlur.Enabled = false;
-                        Plugin.PluginLog.Debug("Turn off {0}", chatLogBlur.Name);
+                        PluginLog.Debug("Turn off {0}", chatLogBlur.Name);
                         BlurItemsToAdd.Add((Blur)chatLogBlur.Clone());
                     }
                     if (BlurDict.TryGetValue("ChatLogPanel_0", out chatLogBlur))
                     {
                         chatLogBlur.Enabled = false;
-                        Plugin.PluginLog.Debug("Turn off {0}", chatLogBlur.Name);
+                        PluginLog.Debug("Turn off {0}", chatLogBlur.Name);
                         BlurItemsToAdd.Add((Blur)chatLogBlur.Clone());
                     }
                     if (BlurDict.TryGetValue("ChatLogPanel_1", out chatLogBlur))
                     {
                         chatLogBlur.Enabled = false;
-                        Plugin.PluginLog.Debug("Turn off {0}", chatLogBlur.Name);
+                        PluginLog.Debug("Turn off {0}", chatLogBlur.Name);
                         BlurItemsToAdd.Add((Blur)chatLogBlur.Clone());
                     }
                     if (BlurDict.TryGetValue("ChatLogPanel_2", out chatLogBlur))
                     {
                         chatLogBlur.Enabled = false;
-                        Plugin.PluginLog.Debug("Turn off {0}", chatLogBlur.Name);
+                        PluginLog.Debug("Turn off {0}", chatLogBlur.Name);
                         BlurItemsToAdd.Add((Blur)chatLogBlur.Clone());
                     }
                     if (BlurDict.TryGetValue("ChatLogPanel_3", out chatLogBlur))
                     {
                         chatLogBlur.Enabled = false;
-                        Plugin.PluginLog.Debug("Turn off {0}", chatLogBlur.Name);
+                        PluginLog.Debug("Turn off {0}", chatLogBlur.Name);
                         BlurItemsToAdd.Add((Blur)chatLogBlur.Clone());
                     }
                 }
@@ -937,7 +904,7 @@ namespace OBSPlugin
                     foreach (Blur blur in blursToTurnOff)
                     {
                         blur.Enabled = false;
-                        Plugin.PluginLog.Debug("Turn off {0}", blur.Name);
+                        PluginLog.Debug("Turn off {0}", blur.Name);
                         BlurItemsToAdd.Add((Blur)blur.Clone());
                     }
                 }
@@ -951,7 +918,7 @@ namespace OBSPlugin
                     if (BlurDict.TryGetValue("Target", out targetBlur))
                     {
                         targetBlur.Enabled = false;
-                        Plugin.PluginLog.Debug("Turn off {0}", targetBlur.Name);
+                        PluginLog.Debug("Turn off {0}", targetBlur.Name);
                         BlurItemsToAdd.Add((Blur)targetBlur.Clone());
                     }
                 }
@@ -966,7 +933,7 @@ namespace OBSPlugin
                     if (BlurDict.TryGetValue("TargetTarget", out targetTargetBlur))
                     {
                         targetTargetBlur.Enabled = false;
-                        Plugin.PluginLog.Debug("Turn off {0}", targetTargetBlur.Name);
+                        PluginLog.Debug("Turn off {0}", targetTargetBlur.Name);
                         BlurItemsToAdd.Add((Blur)targetTargetBlur.Clone());
                     }
                 }
@@ -981,7 +948,7 @@ namespace OBSPlugin
                     if (BlurDict.TryGetValue("FocusTarget", out focusTargetBlur))
                     {
                         focusTargetBlur.Enabled = false;
-                        Plugin.PluginLog.Debug("Turn off {0}", focusTargetBlur.Name);
+                        PluginLog.Debug("Turn off {0}", focusTargetBlur.Name);
                         BlurItemsToAdd.Add((Blur)focusTargetBlur.Clone());
                     }
                 }
@@ -995,7 +962,7 @@ namespace OBSPlugin
                     if (BlurDict.TryGetValue("Character", out characterBlur))
                     {
                         characterBlur.Enabled = false;
-                        Plugin.PluginLog.Debug("Turn off {0}", characterBlur.Name);
+                        PluginLog.Debug("Turn off {0}", characterBlur.Name);
                         BlurItemsToAdd.Add((Blur)characterBlur.Clone());
                     }
                 }
@@ -1010,7 +977,7 @@ namespace OBSPlugin
                     if (BlurDict.TryGetValue("FriendList", out friendListBlur))
                     {
                         friendListBlur.Enabled = false;
-                        Plugin.PluginLog.Debug("Turn off {0}", friendListBlur.Name);
+                        PluginLog.Debug("Turn off {0}", friendListBlur.Name);
                         BlurItemsToAdd.Add((Blur)friendListBlur.Clone());
                     }
                 }
@@ -1023,7 +990,7 @@ namespace OBSPlugin
                     var hotbars = BlurDict.Where(x => x.Key.Length >= 8 && x.Key[..6] == "Hotbar");
                     if (hotbars.Any())
                     {
-                        Plugin.PluginLog.Debug("Turn off HotbarBlur");
+                        PluginLog.Debug("Turn off HotbarBlur");
                         foreach (var i in hotbars)
                         {
                             i.Value.Enabled = false;
@@ -1054,7 +1021,7 @@ namespace OBSPlugin
                     if (BlurDict.TryGetValue("CastBar", out castbarBlur))
                     {
                         castbarBlur.Enabled = false;
-                        Plugin.PluginLog.Debug("Turn off {0}", castbarBlur.Name);
+                        PluginLog.Debug("Turn off {0}", castbarBlur.Name);
                         BlurItemsToAdd.Add((Blur)castbarBlur.Clone());
                     }
                 }
@@ -1114,7 +1081,7 @@ namespace OBSPlugin
                 }
                 catch (Exception ex)
                 {
-                    Plugin.PluginLog.Error(ex, "Could not open StreamFX url");
+                    PluginLog.Error(ex, "Could not open StreamFX url");
                 }
             }
             ImGui.SameLine();
@@ -1134,7 +1101,7 @@ namespace OBSPlugin
                 }
                 catch (Exception ex)
                 {
-                    Plugin.PluginLog.Error(ex, "Could not open OBS-websocket url");
+                    PluginLog.Error(ex, "Could not open OBS-websocket url");
                 }
             }
             ImGui.SameLine();
@@ -1158,7 +1125,7 @@ namespace OBSPlugin
                 }
                 catch (Exception ex)
                 {
-                    Plugin.PluginLog.Error(ex, "Could not open OBS Composite Blur url");
+                    PluginLog.Error(ex, "Could not open OBS Composite Blur url");
                 }
             }
             ImGui.SameLine();
@@ -1178,7 +1145,7 @@ namespace OBSPlugin
                 }
                 catch (Exception ex)
                 {
-                    Plugin.PluginLog.Error(ex, "Could not open OBS-websocket url");
+                    PluginLog.Error(ex, "Could not open OBS-websocket url");
                 }
             }
             if (ImGui.IsItemHovered())
@@ -1201,7 +1168,7 @@ namespace OBSPlugin
                 }
                 catch (Exception ex)
                 {
-                    Plugin.PluginLog.Error(ex, "Could not open OBS-websocket url");
+                    PluginLog.Error(ex, "Could not open OBS-websocket url");
                 }
             }
 
@@ -1213,7 +1180,7 @@ namespace OBSPlugin
         {
             string obsButtonText;
 
-            switch (Plugin.obsStreamStatus)
+            switch (this.Obs.StreamState)
             {
                 case OutputState.Starting:
                     obsButtonText = "Stream starting...";
@@ -1238,120 +1205,55 @@ namespace OBSPlugin
 
             if (ImGui.Button(obsButtonText))
             {
-                if (!Plugin.Connected) return;
-                try
-                {
-                    Plugin.obs.ToggleStreaming();
-                }
-                catch (Exception e)
-                {
-                    Plugin.PluginLog.Error("Error on toggle streaming: {0}", e);
-                    Plugin.Chat.PrintError("[OBSPlugin] Error on toggle streaming, check log for details.");
-                }
+                this.Obs.TryToggleStreaming();
             }
 
             ImGui.SameLine(ImGui.GetColumnWidth() - 80);
-            ImGui.TextColored(Plugin.obsStreamStatus == OutputState.Started ? new(0, 1, 0, 1) : new(1, 0, 0, 1),
-                Plugin.obsStreamStatus == OutputState.Started ? "Streaming" : "Stopped");
+            ImGui.TextColored(this.Obs.StreamState == OutputState.Started ? new(0, 1, 0, 1) : new(1, 0, 0, 1),
+                this.Obs.StreamState == OutputState.Started ? "Streaming" : "Stopped");
 
-            if (Plugin.streamStatus == null) return;
+            if (this.Obs.StreamStatus == null) return;
 
-            ImGui.Text($"Stream time : {Plugin.streamStatus.TotalStreamTime} sec");
-            ImGui.Text($"Kbits/sec : {Plugin.streamStatus.KbitsPerSec} kbit/s");
-            ImGui.Text($"Bytes/sec : {Plugin.streamStatus.BytesPerSec} bytes/s");
-            ImGui.Text($"Framerate : {Plugin.streamStatus.BytesPerSec} %");
-            ImGui.Text($"Strain : {Plugin.streamStatus.Strain} FPS");
-            ImGui.Text($"Dropped frames : {Plugin.streamStatus.DroppedFrames}");
-            ImGui.Text($"Total frames : {Plugin.streamStatus.TotalFrames}");
-        }
-
-        internal void SetRecordingDir()
-        {
-            SetFilenameFormatting();
-            if (Config.RecordDir == null || Config.RecordDir.Length == 0) return;
-            if (Plugin.ClientState == null || Plugin.ClientState.TerritoryType == 0) return;
-
-            var curDir = Config.RecordDir;
-            if (Config.IncludeTerritory && Plugin.obsRecordStatus == OutputState.Stopped)
-            {
-                var terriIdx = Plugin.ClientState.TerritoryType;
-                var terriName = Plugin.Data.GetExcelSheet<TerritoryType>().GetRow(terriIdx).Map.Value.PlaceName.Value.Name;
-                curDir = Path.Combine(curDir, terriName);
-            }
-
-            Plugin.obs.SetRecordingFolder(curDir);
-        }
-
-        internal void SetFilenameFormatting()
-        {
-            if (Config.FilenameFormat == null || Config.FilenameFormat.Length == 0) return;
-            if (Plugin.ClientState == null || Plugin.ClientState.TerritoryType == 0) return;
-
-            var filenameFormat = Config.FilenameFormat;
-            if (Config.ZoneAsSuffix && Plugin.obsRecordStatus == OutputState.Stopped)
-            {
-                var terriIdx = Plugin.ClientState.TerritoryType;
-                var terriName = Plugin.Data.GetExcelSheet<TerritoryType>().GetRow(terriIdx).Map.Value.PlaceName.Value.Name;
-                filenameFormat += "_" + terriName;
-            }
-
-            Plugin.obs.SetFilenameFormatting(filenameFormat);
+            ImGui.Text($"Stream time : {this.Obs.StreamStatus.TotalStreamTime} sec");
+            ImGui.Text($"Kbits/sec : {this.Obs.StreamStatus.KbitsPerSec} kbit/s");
+            ImGui.Text($"Bytes/sec : {this.Obs.StreamStatus.BytesPerSec} bytes/s");
+            ImGui.Text($"Framerate : {this.Obs.StreamStatus.BytesPerSec} %");
+            ImGui.Text($"Strain : {this.Obs.StreamStatus.Strain} FPS");
+            ImGui.Text($"Dropped frames : {this.Obs.StreamStatus.DroppedFrames}");
+            ImGui.Text($"Total frames : {this.Obs.StreamStatus.TotalFrames}");
         }
 
         private void DrawRecord()
         {
 
-            string obsButtonText;
-
-            switch (Plugin.obsRecordStatus)
+            var obsButtonText = this.Obs.RecordState switch
             {
-                case OutputState.Starting:
-                    obsButtonText = "Record starting...";
-                    break;
-
-                case OutputState.Started:
-                    obsButtonText = "Stop recording";
-                    break;
-
-                case OutputState.Stopping:
-                    obsButtonText = "Record stopping...";
-                    break;
-
-                case OutputState.Stopped:
-                    obsButtonText = "Start recording";
-                    break;
-
-                default:
-                    obsButtonText = "State unknown";
-                    break;
-            }
+                OutputState.Starting => "Starting recording",
+                OutputState.Started  => "Stop recording",
+                OutputState.Stopping => "Stopping recording",
+                OutputState.Stopped  => "Start recording",
+                _                    => "State unknown",
+            };
 
             if (ImGui.Button(obsButtonText))
             {
-                if (!Plugin.Connected) return;
-                try
-                {
-                    Plugin.SetRecordingInformation();
-                    Plugin.obs.ToggleRecording();
-                }
-                catch (Exception e)
-                {
-                    Plugin.PluginLog.Error("Error on toggle recording: {0}", e);
-                    Plugin.Chat.PrintError("[OBSPlugin] Error on toggle recording, check log for details.");
-                }
+                if (!this.Obs.IsConnected) return;
+                
+                Plugin.SetRecordingInformation();
+                this.Obs.TryToggleRecording();
             }
 
             ImGui.SameLine(ImGui.GetColumnWidth() - 80);
-            ImGui.TextColored(Plugin.obsRecordStatus == OutputState.Started ? new(0, 1, 0, 1) : new(1, 0, 0, 1),
-                Plugin.obsRecordStatus == OutputState.Started ? "Recording" : "Stopped");
+            ImGui.TextColored(this.Obs.RecordState == OutputState.Started ? new(0, 1, 0, 1) : new(1, 0, 0, 1),
+                this.Obs.RecordState == OutputState.Started ? "Recording" : "Stopped");
 
             if (ImGui.InputText("Recordings Directory", ref Config.RecordDir, 256, ImGuiInputTextFlags.EnterReturnsTrue))
             {
                 Config.Save();
-                if (Plugin.Connected)
+                if (this.Obs.IsConnected)
                 {
                     Plugin.SetRecordingInformation();
-                    Plugin.PluginLog.Information("Recording directory set to {0}", Config.RecordDir);
+                    PluginLog.Information("Recording directory set to {0}", Config.RecordDir);
                 }
             }
             if (ImGui.IsItemHovered())
@@ -1415,13 +1317,13 @@ namespace OBSPlugin
 
         internal void Dispose()
         {
-            if (Plugin.Connected)
+            if (this.Obs.IsConnected)
             {
                 foreach (Blur blur in BlurDict.Values)
                 {
                     blur.Enabled = false;
-                    Plugin.PluginLog.Debug("Turn off {0}", blur.Name);
-                    Plugin.obs.RemoveFilterFromSource(Config.SourceName, blur.Name);
+                    PluginLog.Debug("Turn off {0}", blur.Name);
+                    this.Obs.TryRemoveFilterFromSource(Config.SourceName, blur.Name);
                 }
             }
             isThreadRunning = false;

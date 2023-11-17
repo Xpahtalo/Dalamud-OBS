@@ -2,11 +2,13 @@
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility;
+using Lumina.Excel.GeneratedSheets;
 using OBSPlugin.Attributes;
 using OBSPlugin.Objects;
 using OBSWebsocketDotNet;
-using OBSWebsocketDotNet.Types;
 using System;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -61,17 +63,14 @@ namespace OBSPlugin
         internal Configuration config { get; private set; }
         internal readonly PluginUI ui;
 
-        internal OBSWebsocket obs;
-        internal bool Connected = false;
-        internal bool ConnectionFailed = false;
-        internal StreamStatus streamStatus;
-        internal OutputState obsStreamStatus = OutputState.Stopped;
-        internal OutputState obsRecordStatus = OutputState.Stopped;
+        internal ObsService ObsService { get; }
+
+        public bool ConnectionFailed => ObsService.ConnectionStatus == ConnectionStatus.Failed;
+
         internal readonly StopWatchHook stopWatchHook;
         internal CombatState state;
         internal float lastCountdownValue;
 
-        private bool _connectLock;
         private CancellationTokenSource _cts = new();
         private bool _stoppingRecord = false;
 
@@ -79,12 +78,8 @@ namespace OBSPlugin
 
         public Plugin()
         {
-            obs = new OBSWebsocket();
-            obs.Connected += onConnect;
-            obs.Disconnected += onDisconnect;
-            obs.StreamStatus += onStreamData;
-            obs.StreamingStateChanged += onStreamingStateChange;
-            obs.RecordingStateChanged += onRecordingStateChange;
+            ObsService = new ObsService(this);
+            ObsService.Connected += OnConnect;
 
             this.config = (Configuration)PluginInterface.GetPluginConfig() ?? new Configuration();
             this.config.Initialize(PluginInterface);
@@ -101,10 +96,10 @@ namespace OBSPlugin
             state = new CombatState();
             state.InCombatChanged += new EventHandler((Object sender, EventArgs e) =>
             {
-                if (!Connected)
+                if (!ObsService.IsConnected)
                 {
                     TryConnect(config.Address, config.Password);
-                    if (!Connected) return;
+                    if (!ObsService.IsConnected) return;
                 }
                 if (this.state.InCombat && config.StartRecordOnCombat)
                 {
@@ -116,9 +111,9 @@ namespace OBSPlugin
                         }
                         else
                         {
-                            PluginLog.Information("Auto start recroding");
-                            this.ui.SetRecordingDir();
-                            this.obs.StartRecording();
+                            PluginLog.Information("Auto start recording");
+                            SetRecordingInformation();
+                            ObsService.TryStartRecording();
                         }
                     }
                     catch (ErrorResponseException err)
@@ -139,10 +134,10 @@ namespace OBSPlugin
                                 _cts.Token.ThrowIfCancellationRequested();
                                 Thread.Sleep(1000);
                                 delay -= 1;
-                            } while (delay > 0 || (config.DontStopInCutscene && (this.ClientState.LocalPlayer.OnlineStatus.Id == 15)));
-                            PluginLog.Information("Auto stop recroding");
-                            this.ui.SetRecordingDir();
-                            this.obs.StopRecording();
+                            } while (delay > 0 || (config.DontStopInCutscene && (this.ClientState.LocalPlayer?.OnlineStatus.Id == 15)));
+                            PluginLog.Information("Auto stop recording");
+                            SetRecordingInformation();
+                            ObsService.TryStopRecording();
                         }
                         catch (ErrorResponseException err)
                         {
@@ -159,7 +154,7 @@ namespace OBSPlugin
             });
             state.CountingDownChanged += new EventHandler((Object sender, EventArgs e) =>
             {
-                if (!Connected)
+                if (!ObsService.IsConnected)
                 {
                     TryConnect(config.Address, config.Password);
                     return;
@@ -168,9 +163,9 @@ namespace OBSPlugin
                 {
                     try
                     {
-                        PluginLog.Information("Auto start recroding");
-                        this.ui.SetRecordingDir();
-                        this.obs.StartRecording();
+                        PluginLog.Information("Auto start recording");
+                        SetRecordingInformation();
+                        this.ObsService.TryStartRecording();
                     }
                     catch (ErrorResponseException err)
                     {
@@ -190,79 +185,61 @@ namespace OBSPlugin
             }
         }
 
+        public void SetRecordingInformation()
+        {
+            RecordingInformation recordingInformation;
+            if (ClientState is null || ClientState.TerritoryType == 0)
+                recordingInformation = new RecordingInformation("", "");
+            else
+            {
+                var territoryIdx = ClientState.TerritoryType;
+                var territoryName = Data.GetExcelSheet<TerritoryType>()?.GetRow(territoryIdx)?.Map.Value?.PlaceName.Value?.Name.ToString();
+
+                var filenameFormat = config.FilenameFormat;
+                var directory = config.RecordDir;
+                if (!territoryName.IsNullOrWhitespace())
+                {
+                    if (config.ZoneAsSuffix && !filenameFormat.IsNullOrWhitespace())
+                    {
+                        filenameFormat += "_" + territoryName;
+                    }
+                    if (config.IncludeTerritory && !directory.IsNullOrWhitespace())
+                    {
+                        directory = Path.Combine(directory, territoryName);
+                    }
+                }
+                recordingInformation = new RecordingInformation(directory, filenameFormat);
+            }
+            ObsService.SetRecordingLocation(recordingInformation);
+        }
 
         private void OpenConfigUi()
         {
             this.ui.IsVisible = true;
         }
 
-        public async void TryConnect(string url, string password)
+        public bool TryConnect(string url, string password)
         {
-            if (_connectLock)
-            {
-                return;
-            }
-            try
-            {
-                _connectLock = true;
-                await Task.Run(() => obs.Connect(url, password));
-                ConnectionFailed = false;
-            }
-            catch (AuthFailureException)
-            {
-                _ = Task.Run(() => obs.Disconnect());
-                ConnectionFailed = true;
-            }
-            catch (Exception e)
-            {
-                PluginLog.Error("Connection error {0}", e);
-            }
-            finally
-            {
-                _connectLock = false;
-            }
+            ObsService.TryConnect(url, password);
+            return ObsService.ConnectionStatus == ConnectionStatus.Connected;
         }
-        private void onConnect(object sender, EventArgs e)
+
+        public void TryDisconnect()
         {
-            Connected = true;
-            PluginLog.Information("OBS connected: {0}", config.Address);
-            var streamStatus = obs.GetStreamingStatus();
-            if (streamStatus.IsStreaming)
-                onStreamingStateChange(obs, OutputState.Started);
-            else
-                onStreamingStateChange(obs, OutputState.Stopped);
-            if (streamStatus.IsRecording)
-                onRecordingStateChange(obs, OutputState.Started);
-            else
-                onRecordingStateChange(obs, OutputState.Stopped);
-            if (config.RecordDir.Equals(String.Empty))
+            ObsService.TryDisconnect();
+        }
+
+        private void OnConnect(object sender, EventArgs e)
+        {
+            if (config.RecordDir.IsNullOrWhitespace())
             {
-                var recordDir = obs.GetRecordingFolder();
-                config.RecordDir = recordDir;
-                config.FilenameFormat = obs.GetFilenameFormatting();
+                RecordingInformation recordDir = ObsService.GetRecordingLocation();
+                config.RecordDir = recordDir.Directory;
+                config.FilenameFormat = recordDir.FilenameFormat;
                 config.Save();
             }
         }
-        private void onDisconnect(object sender, EventArgs e)
-        {
-            PluginLog.Information("OBS disconnected: {0}", config.Address);
-            Connected = false;
-        }
 
-        private void onStreamData(OBSWebsocket sender, StreamStatus data)
-        {
-            streamStatus = data;
-        }
-
-        private void onStreamingStateChange(OBSWebsocket sender, OutputState newState)
-        {
-            obsStreamStatus = newState;
-        }
-
-        private void onRecordingStateChange(OBSWebsocket sender, OutputState newState)
-        {
-            obsRecordStatus = newState;
-        }
 
         [Command("/obs")]
         [HelpMessage("Open OBSPlugin config panel.")]
@@ -310,12 +287,7 @@ namespace OBSPlugin
 
             this.ui.Dispose();
 
-            if (obs != null && this.Connected)
-            {
-                if (config.RecordDir.Length > 0)
-                    obs.SetRecordingFolder(config.RecordDir);
-                obs.Disconnect();
-            }
+            ObsService.Dispose();
         }
 
         public void Dispose()

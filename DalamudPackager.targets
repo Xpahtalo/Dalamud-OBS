@@ -7,4 +7,11 @@
                 AssemblyName="$(AssemblyName)"
                 MakeZip="true"/>
     </Target>
+    <Target Name="PackagePlugin" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug'">
+        <DalamudPackager
+                ProjectDir="$(ProjectDir)"
+                OutputPath="$(OutputPath)"
+                AssemblyName="$(AssemblyName)"
+                MakeZip="false"/>
+    </Target>
 </Project>
