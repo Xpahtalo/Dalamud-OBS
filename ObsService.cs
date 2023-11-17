@@ -199,7 +199,7 @@ namespace OBSPlugin
         {
             try
             {
-                if (this.IsConnected)
+                if (this.IsConnected && this.RecordState == OutputState.Stopped)
                 {
                     this._obsWebsocket.StartRecording();
                     return true;
@@ -217,7 +217,7 @@ namespace OBSPlugin
         {
             try
             {
-                if (this.IsConnected)
+                if (this.IsConnected && this.RecordState == OutputState.Started)
                 {
                     this._obsWebsocket.StopRecording();
                     return true;
