@@ -121,6 +121,7 @@ namespace OBSPlugin
                     this.DrawConnectionSettingsTab();
                     this.DrawStreamTab();
                     this.DrawRecordTab();
+                    this.DrawReplayTab();
                     this.DrawBlurSettingsTab();
                     this.DrawAboutTab();
                 }
@@ -131,12 +132,13 @@ namespace OBSPlugin
                 }
                 finally
                 {
+                    // Make sure we properly end the ImGui window even if the exception was able to be handled by Dalamud. The plugin may still crash, but at least we don't ruin the ImGui stack for everyone else. 
                     ImGui.End();
                 }
             }
-
         }
 
+        #region Update Blurs
         private unsafe (float, float, float, float) GetUIRect(float X, float Y, float W, float H)
         {
             var size = ImGui.GetIO().DisplaySize;
@@ -225,6 +227,33 @@ namespace OBSPlugin
             return Obs.RemoveFiltersWithPrefixFromSource(Config.SourceName, blurNamePrefix);
         }
 
+        private unsafe void UpdateBlur(Blur blur)
+        {
+            blur.LastEdit = DateTime.Now;
+            if (BlurDict.TryGetValue(blur.Name, out Blur existingBlur))
+            {
+                if (!blur.Equals(existingBlur))
+                {
+                    BlurDict[blur.Name] = blur;
+                    if (Config.BlurAsync)
+                    {
+                        BlurItemsToAdd.Add(blur);
+                    }
+                    else
+                    {
+                        OBSAddOrUpdateBlur(blur);
+                    }
+                }
+            }
+            else
+            {
+                BlurDict[blur.Name] = blur;
+                BlurItemsToAdd.Add((Blur)blur.Clone());
+            }
+        }
+        #endregion
+        
+        #region Update Addons
         internal unsafe void UpdateGameUI()
         {
             if (!Config.Enabled) return;
@@ -341,7 +370,6 @@ namespace OBSPlugin
             }
         }
 
-
         private unsafe Vector2 GetNodePosition(AtkResNode* node)
         {
             var pos = new Vector2(node->X, node->Y);
@@ -417,31 +445,7 @@ namespace OBSPlugin
             return blur;
         }
 
-        private unsafe void UpdateBlur(Blur blur)
-        {
-            blur.LastEdit = DateTime.Now;
-            if (BlurDict.TryGetValue(blur.Name, out Blur existingBlur))
-            {
-                if (!blur.Equals(existingBlur))
-                {
-                    BlurDict[blur.Name] = blur;
-                    if (Config.BlurAsync)
-                    {
-                        BlurItemsToAdd.Add(blur);
-                    }
-                    else
-                    {
-                        OBSAddOrUpdateBlur(blur);
-                    }
-                }
-            }
-            else
-            {
-                BlurDict[blur.Name] = blur;
-                BlurItemsToAdd.Add((Blur)blur.Clone());
-            }
-        }
-
+        
         private unsafe void UpdateChatLog()
         {
             if (!Config.ChatLogBlur) return;
@@ -456,11 +460,9 @@ namespace OBSPlugin
                 UpdateChatLogPanel("ChatLogPanel_2", panel["ChatLogPanel_2"]);
                 UpdateChatLogPanel("ChatLogPanel_3", panel["ChatLogPanel_3"]);
             }
-            catch (Exception e)
+            catch (Exception)
             {
-                return;
             }
-
         }
 
         private unsafe void UpdateChatLogPanel(string ChatLogWindowName, bool followUI = true)
@@ -491,7 +493,7 @@ namespace OBSPlugin
             };
 
         }
-
+        
         private unsafe void UpdatePartyList()
         {
             if (!Config.PartyListBlur) return;
@@ -581,7 +583,6 @@ namespace OBSPlugin
                 });
             }
         }
-
 
         private unsafe void UpdateTarget()
         {
@@ -734,7 +735,7 @@ namespace OBSPlugin
                 UpdateBlur(GetBlurFromNode(childNode, $"Hotbar{suffix}"));
             }
         }
-        
+
         private unsafe void UpdateCastBar()
         {
             if (!Config.CastBarBlur) return;
@@ -755,7 +756,9 @@ namespace OBSPlugin
             var childNode = addon->UldManager.NodeList[0];
             UpdateBlur(GetBlurFromNode(childNode, addonName));
         }
+        #endregion
 
+        #region Draw Tabs
         private void DrawConnectionSettingsTab()
         {
             using var tab = ImRaii.TabItem("Connection##Tab");
@@ -797,6 +800,211 @@ namespace OBSPlugin
             }
         }
 
+        private void DrawStreamTab()
+        {
+            using var tab = ImRaii.TabItem("Stream##Tab");
+            if (!tab) return;
+            using var child = ImRaii.Child("Stream##SettingsRegion");
+            if (!child) return;
+
+            string obsButtonText;
+
+            switch (this.Obs.StreamState)
+            {
+                case OutputState.Starting:
+                    obsButtonText = "Stream starting...";
+                    break;
+
+                case OutputState.Started:
+                    obsButtonText = "Stop streaming";
+                    break;
+
+                case OutputState.Stopping:
+                    obsButtonText = "Stream stopping...";
+                    break;
+
+                case OutputState.Stopped:
+                    obsButtonText = "Start streaming";
+                    break;
+
+                default:
+                    obsButtonText = "State unknown";
+                    break;
+            }
+
+            if (ImGui.Button(obsButtonText))
+            {
+                this.Obs.TryToggleStreaming();
+            }
+
+            ImGui.SameLine(ImGui.GetColumnWidth() - 80);
+            ImGui.TextColored(this.Obs.StreamState == OutputState.Started ? new(0, 1, 0, 1) : new(1, 0, 0, 1),
+                this.Obs.StreamState == OutputState.Started ? "Streaming" : "Stopped");
+
+            if (this.Obs.StreamStatus == null) return;
+
+            ImGui.Text($"Stream time : {this.Obs.StreamStatus.TotalStreamTime} sec");
+            ImGui.Text($"Kbits/sec : {this.Obs.StreamStatus.KbitsPerSec} kbit/s");
+            ImGui.Text($"Bytes/sec : {this.Obs.StreamStatus.BytesPerSec} bytes/s");
+            ImGui.Text($"Framerate : {this.Obs.StreamStatus.BytesPerSec} %");
+            ImGui.Text($"Strain : {this.Obs.StreamStatus.Strain} FPS");
+            ImGui.Text($"Dropped frames : {this.Obs.StreamStatus.DroppedFrames}");
+            ImGui.Text($"Total frames : {this.Obs.StreamStatus.TotalFrames}");
+        }
+
+        private void DrawRecordTab()
+        {
+            using var tab = ImRaii.TabItem("Record##Tab");
+            if (!tab) return;
+            using var child = ImRaii.Child("Record##SettingsRegion");
+            if (!child) return;
+
+            var obsButtonText = this.Obs.RecordState switch
+            {
+                OutputState.Starting => "Starting recording",
+                OutputState.Started  => "Stop recording",
+                OutputState.Stopping => "Stopping recording",
+                OutputState.Stopped  => "Start recording",
+                _                    => "State unknown",
+            };
+
+            if (ImGui.Button(obsButtonText))
+            {
+                if (!this.Obs.IsConnected) return;
+
+                Plugin.SetRecordingInformation();
+                this.Obs.TryToggleRecording();
+            }
+
+            ImGui.SameLine(ImGui.GetColumnWidth() - 80);
+            ImGui.TextColored(this.Obs.RecordState == OutputState.Started ? new(0, 1, 0, 1) : new(1, 0, 0, 1),
+                this.Obs.RecordState == OutputState.Started ? "Recording" : "Stopped");
+
+            if (ImGui.InputText("Recordings Directory", ref Config.RecordDir, 256, ImGuiInputTextFlags.EnterReturnsTrue))
+            {
+                Config.Save();
+                if (this.Obs.IsConnected)
+                {
+                    Plugin.SetRecordingInformation();
+                    PluginLog.Information("Recording directory set to {0}", Config.RecordDir);
+                }
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Enter to save");
+
+            if (ImGui.Checkbox("Zone as subfolder", ref Config.IncludeTerritory))
+            {
+                Config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("If selected, will save recordings to a subfolder named by the current zone name.");
+
+            if (ImGui.Checkbox("Zone as suffix", ref Config.ZoneAsSuffix))
+            {
+                Config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("If selected, will add a suffix named by the current zone name to recordings.");
+
+            if (ImGui.Checkbox("Start Recording On Combat", ref Config.StartRecordOnCombat))
+            {
+                Config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("If selected, will automatically start recording when combat starts.");
+
+            if (ImGui.Checkbox("Start Recording On CountDown", ref Config.StartRecordOnCountDown))
+            {
+                Config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("If selected, will automatically start recording when countdown starts.");
+
+            if (ImGui.Checkbox("Stop Recording On Combat Over In", ref Config.StopRecordOnCombat))
+            {
+                Config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("If selected, will automatically stop recording when combat is over in ");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.DragInt("", ref Config.StopRecordOnCombatDelay, 1, 0, 300, "%d second(s)"))
+            {
+                Config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Delay of \"Stop Recording On Combat Over\" in seconds.");
+            if (Config.StopRecordOnCombat && ImGui.Checkbox("Don't Stop Recording in cutscene", ref Config.DontStopInCutscene))
+            {
+                Config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("If selected, will not stop recording if player is viewing cutscenes.");
+            if (Config.StopRecordOnCombat && ImGui.Checkbox("Cancel Stop Recording On Combat Resume", ref Config.CancelStopRecordOnResume))
+            {
+                Config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("If selected, will not stop recording if another starts before stop countdown.");
+        }
+        
+        private void DrawReplayTab()
+        {
+            using var tab = ImRaii.TabItem("Replay Buffer##Tab");
+            if (!tab) return;
+            using var child = ImRaii.Child("Replay Buffer##SettingsRegion");
+            if (!child) return;
+            
+            ImGui.Text("Replay buffer uses the same directory and filename settings as recording. You can edit them in that tab.");
+            ImGui.Text($"Recordings directory: {Config.RecordDir}");
+            ImGui.Text($"Zone as subfolder: {Config.IncludeTerritory}");
+            ImGui.Text($"Zone as suffix: {Config.ZoneAsSuffix}");
+
+            if (ImGui.Checkbox("Start Replay Buffer on Duty Entrance", ref Config.StartReplayBufferOnDutyEntrance))
+                Config.Save();
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("If selected, will automatically start replay buffer when entering a duty.");
+            
+            using (var disabled = ImRaii.Disabled(!this.Config.StartReplayBufferOnDutyEntrance))
+            {
+                if (ImGui.Checkbox("Limit Replay Buffer to High End Duties", ref this.Config.LimitReplayBufferToHighEndDuty))
+                    this.Config.Save();
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("""
+                                     If selected, will only start replay buffer when entering duties in the High End Duty Tab.
+                                     You can still manually start replay buffer in other duties.
+                                     """);
+            }
+            
+            if(ImGui.Checkbox("Stop Replay Buffer on Duty Exit", ref Config.StopReplayBufferOnDutyExit))
+                Config.Save();
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("If selected, will automatically stop replay buffer when exiting a duty.");
+            
+            ImGui.Text("Only one of these can be enabled at a time.");
+            if(ImGui.Checkbox("Save Replay Buffer on combat end", ref Config.TriggerReplayBufferOnCombatEnd))
+            {
+                Config.TriggerReplayBufferOnWipe = false;
+                Config.Save();
+            }
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("If selected, will save replay buffer when combat ends.");
+            if(Config.TriggerReplayBufferOnCombatEnd)
+            {
+                ImGui.Indent();
+                ImGui.Text($"Save Replay Buffer on combat end in: {Config.StopRecordOnCombatDelay} second(s)");
+                ImGui.Unindent();
+            }
+            
+            if(ImGui.Checkbox("Save Replay Buffer on wipe", ref Config.TriggerReplayBufferOnWipe))
+            {
+                Config.TriggerReplayBufferOnCombatEnd = false;
+                Config.Save();
+            }
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("If selected, will save replay buffer when party wipes.");
+        }
+        
         private void DrawBlurSettingsTab()
         {
             using var tab = ImRaii.TabItem("Blur##Tab");
@@ -818,8 +1026,8 @@ namespace OBSPlugin
                 Config.Save();
             }
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Asynchronizly update the blur filters in obs.\n" +
-                    "Asynchronizly update will cause slight delays in updating the filters but has a better performance.");
+                ImGui.SetTooltip("Asynchronously update the blur filters in obs.\n" +
+                    "Asynchronously update will cause slight delays in updating the filters but has a better performance.");
             if (ImGui.Checkbox("Draw Blur Rect", ref Config.DrawBlurRect))
             {
                 Config.Save();
@@ -1038,7 +1246,7 @@ namespace OBSPlugin
             }
 
         }
-
+        
         private void DrawAboutTab()
         {
             using var tab = ImRaii.TabItem("About##Tab");
@@ -1162,154 +1370,7 @@ namespace OBSPlugin
 
 
         }
-
-        private void DrawStreamTab()
-        {
-            using var tab = ImRaii.TabItem("Stream##Tab");
-            if (!tab) return;
-            using var child = ImRaii.Child("Stream##SettingsRegion");
-            if (!child) return;
-
-            string obsButtonText;
-
-            switch (this.Obs.StreamState)
-            {
-                case OutputState.Starting:
-                    obsButtonText = "Stream starting...";
-                    break;
-
-                case OutputState.Started:
-                    obsButtonText = "Stop streaming";
-                    break;
-
-                case OutputState.Stopping:
-                    obsButtonText = "Stream stopping...";
-                    break;
-
-                case OutputState.Stopped:
-                    obsButtonText = "Start streaming";
-                    break;
-
-                default:
-                    obsButtonText = "State unknown";
-                    break;
-            }
-
-            if (ImGui.Button(obsButtonText))
-            {
-                this.Obs.TryToggleStreaming();
-            }
-
-            ImGui.SameLine(ImGui.GetColumnWidth() - 80);
-            ImGui.TextColored(this.Obs.StreamState == OutputState.Started ? new(0, 1, 0, 1) : new(1, 0, 0, 1),
-                this.Obs.StreamState == OutputState.Started ? "Streaming" : "Stopped");
-
-            if (this.Obs.StreamStatus == null) return;
-
-            ImGui.Text($"Stream time : {this.Obs.StreamStatus.TotalStreamTime} sec");
-            ImGui.Text($"Kbits/sec : {this.Obs.StreamStatus.KbitsPerSec} kbit/s");
-            ImGui.Text($"Bytes/sec : {this.Obs.StreamStatus.BytesPerSec} bytes/s");
-            ImGui.Text($"Framerate : {this.Obs.StreamStatus.BytesPerSec} %");
-            ImGui.Text($"Strain : {this.Obs.StreamStatus.Strain} FPS");
-            ImGui.Text($"Dropped frames : {this.Obs.StreamStatus.DroppedFrames}");
-            ImGui.Text($"Total frames : {this.Obs.StreamStatus.TotalFrames}");
-        }
-
-        private void DrawRecordTab()
-        {
-            using var tab = ImRaii.TabItem("Record##Tab");
-            if (!tab) return;
-            using var child = ImRaii.Child("Record##SettingsRegion");
-            if (!child) return;
-
-            var obsButtonText = this.Obs.RecordState switch
-            {
-                OutputState.Starting => "Starting recording",
-                OutputState.Started  => "Stop recording",
-                OutputState.Stopping => "Stopping recording",
-                OutputState.Stopped  => "Start recording",
-                _                    => "State unknown",
-            };
-
-            if (ImGui.Button(obsButtonText))
-            {
-                if (!this.Obs.IsConnected) return;
-
-                Plugin.SetRecordingInformation();
-                this.Obs.TryToggleRecording();
-            }
-
-            ImGui.SameLine(ImGui.GetColumnWidth() - 80);
-            ImGui.TextColored(this.Obs.RecordState == OutputState.Started ? new(0, 1, 0, 1) : new(1, 0, 0, 1),
-                this.Obs.RecordState == OutputState.Started ? "Recording" : "Stopped");
-
-            if (ImGui.InputText("Recordings Directory", ref Config.RecordDir, 256, ImGuiInputTextFlags.EnterReturnsTrue))
-            {
-                Config.Save();
-                if (this.Obs.IsConnected)
-                {
-                    Plugin.SetRecordingInformation();
-                    PluginLog.Information("Recording directory set to {0}", Config.RecordDir);
-                }
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Enter to save");
-
-            if (ImGui.Checkbox("Zone as subfolder", ref Config.IncludeTerritory))
-            {
-                Config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("If selected, will save recordings to a subfolder named by the current zone name.");
-
-            if (ImGui.Checkbox("Zone as suffix", ref Config.ZoneAsSuffix))
-            {
-                Config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("If selected, will add a suffix named by the current zone name to recordings.");
-
-            if (ImGui.Checkbox("Start Recording On Combat", ref Config.StartRecordOnCombat))
-            {
-                Config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("If selected, will automatically start recording when combat starts.");
-
-            if (ImGui.Checkbox("Start Recording On CountDown", ref Config.StartRecordOnCountDown))
-            {
-                Config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("If selected, will automatically start recording when countdown starts.");
-
-            if (ImGui.Checkbox("Stop Recording On Combat Over In", ref Config.StopRecordOnCombat))
-            {
-                Config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("If selected, will automatically stop recording when combat is over in ");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.DragInt("", ref Config.StopRecordOnCombatDelay, 1, 0, 300, "%d second(s)"))
-            {
-                Config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Delay of \"Stop Recording On Combat Over\" in seconds.");
-            if (Config.StopRecordOnCombat && ImGui.Checkbox("Don't Stop Recording in cutscene", ref Config.DontStopInCutscene))
-            {
-                Config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("If selected, will not stop recording if player is viewing cutscenes.");
-            if (Config.StopRecordOnCombat && ImGui.Checkbox("Cancel Stop Recording On Combat Resume", ref Config.CancelStopRecordOnResume))
-            {
-                Config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("If selected, will not stop recording if another starts before stop countdown.");
-        }
+        #endregion
 
         internal void Dispose()
         {
@@ -1324,6 +1385,5 @@ namespace OBSPlugin
             }
             isThreadRunning = false;
         }
-
     }
 }

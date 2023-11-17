@@ -44,6 +44,12 @@ namespace OBSPlugin
         public bool CancelStopRecordOnResume = true;
         public int StopRecordOnCombatDelay = 5;
         public bool DontStopInCutscene = true;
+        // Replay Buffer settings
+        public bool StartReplayBufferOnDutyEntrance = false;
+        public bool LimitReplayBufferToHighEndDuty = false;
+        public bool StopReplayBufferOnDutyExit = false;
+        public bool TriggerReplayBufferOnCombatEnd = false;
+        public bool TriggerReplayBufferOnWipe = false;
 
         public void Initialize(DalamudPluginInterface pluginInterface)
         {

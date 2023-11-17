@@ -54,6 +54,10 @@ namespace OBSPlugin
         [PluginService]
         [RequiredVersion("1.0")]
         internal IGameInteropProvider GameInteropProvider { get; init; }
+        
+        [PluginService]
+        [RequiredVersion("1.0")]
+        internal IDutyState DutyState { get; init; }
 
         [PluginService]
         [RequiredVersion("1.0")]
@@ -94,86 +98,8 @@ namespace OBSPlugin
 
 
             state = new CombatState();
-            state.InCombatChanged += new EventHandler((Object sender, EventArgs e) =>
-            {
-                if (!ObsService.IsConnected)
-                {
-                    TryConnect(config.Address, config.Password);
-                    if (!ObsService.IsConnected) return;
-                }
-                if (this.state.InCombat && config.StartRecordOnCombat)
-                {
-                    try
-                    {
-                        if (config.CancelStopRecordOnResume && _stoppingRecord)
-                        {
-                            _cts.Cancel();
-                        }
-                        else
-                        {
-                            PluginLog.Information("Auto start recording");
-                            SetRecordingInformation();
-                            ObsService.TryStartRecording();
-                        }
-                    }
-                    catch (ErrorResponseException err)
-                    {
-                        PluginLog.Warning("Start Recording Error: {0}", err);
-                    }
-                }
-                else if (!this.state.InCombat && config.StopRecordOnCombat)
-                {
-                    new Task(() =>
-                    {
-                        try
-                        {
-                            _stoppingRecord = true;
-                            var delay = config.StopRecordOnCombatDelay;
-                            do
-                            {
-                                _cts.Token.ThrowIfCancellationRequested();
-                                Thread.Sleep(1000);
-                                delay -= 1;
-                            } while (delay > 0 || (config.DontStopInCutscene && (this.ClientState.LocalPlayer?.OnlineStatus.Id == 15)));
-                            PluginLog.Information("Auto stop recording");
-                            SetRecordingInformation();
-                            ObsService.TryStopRecording();
-                        }
-                        catch (ErrorResponseException err)
-                        {
-                            PluginLog.Warning("Stop Recording Error: {0}", err);
-                        }
-                        finally
-                        {
-                            _stoppingRecord = false;
-                            _cts.Dispose();
-                            _cts = new();
-                        }
-                    }, _cts.Token).Start();
-                }
-            });
-            state.CountingDownChanged += new EventHandler((Object sender, EventArgs e) =>
-            {
-                if (!ObsService.IsConnected)
-                {
-                    TryConnect(config.Address, config.Password);
-                    return;
-                }
-                if (this.state.CountDownValue > lastCountdownValue && config.StartRecordOnCountDown)
-                {
-                    try
-                    {
-                        PluginLog.Information("Auto start recording");
-                        SetRecordingInformation();
-                        this.ObsService.TryStartRecording();
-                    }
-                    catch (ErrorResponseException err)
-                    {
-                        PluginLog.Warning("Start Recording Error: {0}", err);
-                    }
-                }
-                lastCountdownValue = this.state.CountDownValue;
-            });
+            state.InCombatChanged += this.InCombatChanged;
+            state.CountingDownChanged += this.CountingDownChanged;
             this.stopWatchHook = new StopWatchHook(PluginInterface, state, SigScanner, Condition, GameInteropProvider);
 
             PluginLog.Information("stopWatchHook");
@@ -182,6 +108,80 @@ namespace OBSPlugin
             if (config.Password.Length > 0)
             {
                 TryConnect(config.Address, config.Password);
+            }
+
+            DutyState.DutyStarted += OnDutyStarted;
+            DutyState.DutyCompleted += OnDutyCompleted;
+            DutyState.DutyWiped += OnWipe;
+        }
+        
+        private void CountingDownChanged(object sender, EventArgs e)
+        {
+            if (!this.ObsService.IsConnected)
+            {
+                this.TryConnect(this.config.Address, this.config.Password);
+                return;
+            }
+            if (this.state.CountDownValue > this.lastCountdownValue && this.config.StartRecordOnCountDown)
+            {
+                try
+                {
+                    this.PluginLog.Information("Auto start recording");
+                    this.SetRecordingInformation();
+                    this.ObsService.TryStartRecording();
+                }
+                catch (ErrorResponseException err)
+                {
+                    this.PluginLog.Warning("Start Recording Error: {0}", err);
+                }
+            }
+            this.lastCountdownValue = this.state.CountDownValue;
+        }
+        
+        private void InCombatChanged(object sender, EventArgs e)
+        {
+
+                this.TryConnect(this.config.Address, this.config.Password);
+
+            if (this.state.InCombat && this.config.StartRecordOnCombat)
+            {
+                    if (this.config.CancelStopRecordOnResume && this._stoppingRecord)
+                    {
+                        this._cts.Cancel();
+                    }
+                    else
+                    {
+                        this.PluginLog.Information("Auto start recording");
+                        this.SetRecordingInformation();
+                        this.ObsService.TryStartRecording();
+                    }
+            }
+            else if (!this.state.InCombat && this.config.StopRecordOnCombat)
+            {
+                new Task(() =>
+                {
+                    try
+                    {
+                        this._stoppingRecord = true;
+                        var delay = this.config.StopRecordOnCombatDelay;
+                        do
+                        {
+                            this._cts.Token.ThrowIfCancellationRequested();
+                            Thread.Sleep(1000);
+                            delay -= 1;
+                        } while (delay > 0 || (this.config.DontStopInCutscene && (this.ClientState.LocalPlayer?.OnlineStatus.Id == 15)));
+                        this.PluginLog.Information("Auto stop recording");
+                        this.SetRecordingInformation();
+                        this.ObsService.TryStopRecording();
+                        this.ObsService.TrySaveReplayBuffer();
+                    }
+                    finally
+                    {
+                        this._stoppingRecord = false;
+                        this._cts.Dispose();
+                        this._cts = new();
+                    }
+                }, this._cts.Token).Start();
             }
         }
 
@@ -224,11 +224,6 @@ namespace OBSPlugin
             return ObsService.ConnectionStatus == ConnectionStatus.Connected;
         }
 
-        public void TryDisconnect()
-        {
-            ObsService.TryDisconnect();
-        }
-
         private void OnConnect(object sender, EventArgs e)
         {
             if (config.RecordDir.IsNullOrWhitespace())
@@ -240,7 +235,30 @@ namespace OBSPlugin
             }
         }
 
-
+        private void OnDutyStarted(object sender, ushort territoryId)
+        {
+            if (this.config.StartReplayBufferOnDutyEntrance)
+            {
+                this.ObsService.TryStartReplayBuffer();
+            }
+        }
+        
+        private void OnDutyCompleted(object sender, ushort territoryId)
+        {
+            if (this.config.StopReplayBufferOnDutyExit)
+            {
+                this.ObsService.TryStopReplayBuffer();
+            }
+        }
+        
+        private void OnWipe(object sender, ushort territoryId)
+        {
+            if (this.config.TriggerReplayBufferOnWipe)
+            {
+                this.ObsService.TryStopReplayBuffer();
+            }
+        }
+        
         [Command("/obs")]
         [HelpMessage("Open OBSPlugin config panel.")]
         public unsafe void ObsCommand(string command, string args)
@@ -284,6 +302,10 @@ namespace OBSPlugin
             PluginInterface.SavePluginConfig(this.config);
 
             PluginInterface.UiBuilder.Draw -= this.ui.Draw;
+            
+            DutyState.DutyStarted -= OnDutyStarted;
+            DutyState.DutyCompleted -= OnDutyCompleted;
+            DutyState.DutyWiped -= OnWipe;
 
             this.ui.Dispose();
 

@@ -19,9 +19,10 @@ namespace OBSPlugin
 
         public bool IsConnected => this._obsWebsocket.IsConnected;
         public ConnectionStatus ConnectionStatus { get; private set; }
-        public OutputState RecordState { get; private set; } = OutputState.Stopped;
-        public OutputState StreamState { get; private set; } = OutputState.Stopped;
         public StreamStatus StreamStatus { get; private set; }
+        public OutputState StreamState { get; private set; } = OutputState.Stopped;
+        public OutputState RecordState { get; private set; } = OutputState.Stopped;
+        public OutputState ReplayState { get; private set; } = OutputState.Stopped;
 
         public event EventHandler Connected
         {
@@ -35,9 +36,11 @@ namespace OBSPlugin
             this._obsWebsocket = new OBSWebsocket();
             this._obsWebsocket.Connected += this.OnConnected;
             this._obsWebsocket.Disconnected += this.OnDisconnected;
+            
+            this._obsWebsocket.StreamStatus += (_, streamStatus) => this.StreamStatus = streamStatus;
             this._obsWebsocket.RecordingStateChanged += (_, recordStatus) => this.RecordState = recordStatus;
             this._obsWebsocket.StreamingStateChanged += (_, streamStatus) => this.StreamState = streamStatus;
-            this._obsWebsocket.StreamStatus += (_, streamStatus) => this.StreamStatus = streamStatus;
+            this._obsWebsocket.ReplayBufferStateChanged += (_, replayStatus) => this.ReplayState = replayStatus;
         }
 
         public async void TryConnect(string url, string password)
@@ -227,6 +230,60 @@ namespace OBSPlugin
             {
                 this.Plugin.PluginLog.Error("Error on stop recording: {0}", e);
                 this.Plugin.Chat.PrintError("[OBSPlugin] Error on stop recording, check log for details.");
+            }
+            return false;
+        }
+
+        public bool TryStartReplayBuffer()
+        {
+            try
+            {
+                if (this.IsConnected && this.ReplayState == OutputState.Stopped)
+                {
+                    this._obsWebsocket.StartReplayBuffer();
+                    return true;
+                }
+            }
+            catch (Exception e)
+            {
+                this.Plugin.PluginLog.Error("Error on start replay buffer: {0}", e);
+                this.Plugin.Chat.PrintError("[OBSPlugin] Error on start replay buffer, check log for details.");
+            }
+            return false;
+        }
+        
+        public bool TryStopReplayBuffer()
+        {
+            try
+            {
+                if (this.IsConnected && this.ReplayState == OutputState.Started)
+                {
+                    this._obsWebsocket.StopReplayBuffer();
+                    return true;
+                }
+            }
+            catch (Exception e)
+            {
+                this.Plugin.PluginLog.Error("Error on stop replay buffer: {0}", e);
+                this.Plugin.Chat.PrintError("[OBSPlugin] Error on stop replay buffer, check log for details.");
+            }
+            return false;
+        }
+        
+        public bool TrySaveReplayBuffer()
+        {
+            try
+            {
+                if (this.IsConnected && this.ReplayState == OutputState.Started)
+                {
+                    this._obsWebsocket.SaveReplayBuffer();
+                    return true;
+                }
+            }
+            catch (Exception e)
+            {
+                this.Plugin.PluginLog.Error("Error on save replay buffer: {0}", e);
+                this.Plugin.Chat.PrintError("[OBSPlugin] Error on save replay buffer, check log for details.");
             }
             return false;
         }
