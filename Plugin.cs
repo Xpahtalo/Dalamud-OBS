@@ -1,11 +1,5 @@
-﻿using Dalamud.Data;
-using Dalamud.Game;
-using Dalamud.Game.ClientState;
-using Dalamud.Game.ClientState.Conditions;
-using Dalamud.Game.Command;
-using Dalamud.Game.Gui;
+﻿using Dalamud.Game;
 using Dalamud.IoC;
-using Dalamud.Logging;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using OBSPlugin.Attributes;
@@ -58,6 +52,10 @@ namespace OBSPlugin
         [PluginService]
         [RequiredVersion("1.0")]
         internal IGameInteropProvider GameInteropProvider { get; init; }
+
+        [PluginService]
+        [RequiredVersion("1.0")]
+        internal IPluginLog PluginLog { get; init; }
 
         internal readonly PluginCommandManager<Plugin> commandManager;
         internal Configuration config { get; private set; }
