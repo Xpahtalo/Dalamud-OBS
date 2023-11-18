@@ -113,9 +113,9 @@ namespace OBSPlugin
             ImGui.SetNextWindowSize(new Vector2(530, 450), ImGuiCond.FirstUseEver);
             bool configOpen = IsVisible;
 
-            if (ImGui.Begin("OBS Plugin Config", ref configOpen))
+            try
             {
-                try
+                if (ImGui.Begin("OBS Plugin Config", ref configOpen))
                 {
                     this.IsVisible = configOpen;
                     using var tabBar = ImRaii.TabBar("TabBar");
@@ -128,16 +128,17 @@ namespace OBSPlugin
                     this.DrawBlurSettingsTab();
                     this.DrawAboutTab();
                 }
-                catch (Exception e)
-                {
-                    PluginLog.Error("Unhandled exception while drawing UI: {0}", e);
-                    throw;
-                }
-                finally
-                {
-                    // Make sure we properly end the ImGui window even if the exception was able to be handled by Dalamud. The plugin may still crash, but at least we don't ruin the ImGui stack for everyone else. 
-                    ImGui.End();
-                }
+            }
+            catch (Exception e)
+            {
+                this.PluginLog.Error("Unhandled exception while drawing UI: {0}", e);
+                throw;
+            }
+            finally
+            {
+                // Make sure we properly end the ImGui window even if the exception was able to be handled by Dalamud.
+                // The plugin may still crash, but at least we don't ruin the ImGui stack for everyone else. 
+                ImGui.End();
             }
         }
 
