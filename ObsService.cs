@@ -16,9 +16,11 @@ namespace OBSPlugin
         private RecordingInformation _previousRecordingInformation;
         private Plugin Plugin { get; }
         private IPluginLog PluginLog => Plugin.PluginLog;
-
-        public bool IsConnected => this._obsWebsocket.IsConnected;
+        
+        /// Was using <see cref="OBSWebsocket.IsConnected"/>, but that sends a a blocking ping and can cause delays.
+        public bool IsConnected => ConnectionStatus == ConnectionStatus.Connected;
         public ConnectionStatus ConnectionStatus { get; private set; }
+
         public StreamStatus StreamStatus { get; private set; }
         public OutputState StreamState { get; private set; } = OutputState.Stopped;
         public OutputState RecordState { get; private set; } = OutputState.Stopped;
@@ -43,29 +45,50 @@ namespace OBSPlugin
             this._obsWebsocket.ReplayBufferStateChanged += (_, replayStatus) => this.ReplayState = replayStatus;
         }
 
-        public async void TryConnect(string url, string password)
+        public async void TryConnectAsync(string url, string password)
         {
-            if (this._connectionLock)
+            if(!this.IsConnected)
             {
-                return;
+                this.ConnectionStatus = ConnectionStatus.Connecting;
+                
+                if (this._connectionLock)
+                {
+                    return;
+                }
+                // Exceptions don't propagate out of an async void Task, so the exception handlers need to be part of the task.
+                // This should probably be changed to a Task<bool> and raise events in the future. But I've been limiting the
+                // amount of major implementation choices due to more reworks coming.
+                await Task.Run(delegate
+                {
+                    try
+                    {
+                        this._connectionLock = true;
+                        this._obsWebsocket.Connect(url, password);
+                    }
+                    catch (AuthFailureException)
+                    {
+                        this.PluginLog.Error("Failed to connect to OBS: Authentication failure");
+                        this._obsWebsocket.Disconnect();
+                    }
+                    catch (ArgumentException e)
+                    {
+                        this.PluginLog.Error("Failed to connect to OBS: {0}", e.Message);
+                    }
+                    catch (Exception e)
+                    {
+                        this.Plugin.PluginLog.Error(e, "Connection error: {0}", e.Message);
+                    }
+                    finally
+                    {
+                        if (!this.IsConnected)
+                            this.ConnectionStatus = ConnectionStatus.Failed;
+                        this._connectionLock = false;
+                    }
+                });
             }
-            try
+            else
             {
-                this._connectionLock = true;
-                await Task.Run(() => this._obsWebsocket.Connect(url, password));
-            }
-            catch (AuthFailureException)
-            {
-                _ = Task.Run(() => this._obsWebsocket.Disconnect());
-                this.SetConnectionFailed(true);
-            }
-            catch (Exception e)
-            {
-                this.Plugin.PluginLog.Error(e, "Connection error: {0}", e.Message);
-            }
-            finally
-            {
-                this._connectionLock = false;
+                PluginLog.Information("Cannot try connecting. Already connected.");
             }
         }
 
@@ -137,6 +160,7 @@ namespace OBSPlugin
             {
                 this.RestoreRecordingLocation();
                 this._obsWebsocket.Disconnect();
+                this.ConnectionStatus = ConnectionStatus.Disconnected;
             }
         }
 
@@ -234,6 +258,24 @@ namespace OBSPlugin
             return false;
         }
 
+        public bool TryToggleReplayBuffer()
+        {
+            try
+            {
+                if (this.IsConnected)
+                {
+                    this._obsWebsocket.ToggleReplayBuffer();
+                    return true;
+                }
+            }
+            catch (Exception e)
+            {
+                this.Plugin.PluginLog.Error("Error on toggle replay buffer: {0}", e);
+                this.Plugin.Chat.PrintError("[OBSPlugin] Error on toggle replay buffer, check log for details.");
+            }
+            return false;
+        }
+        
         public bool TryStartReplayBuffer()
         {
             try
@@ -290,10 +332,9 @@ namespace OBSPlugin
 
         private void OnConnected(object sender, EventArgs e)
         {
+            this.ConnectionStatus = ConnectionStatus.Connected;
             this.Plugin.PluginLog.Information("OBS connected");
             this._previousRecordingInformation = this.GetRecordingLocation();
-            this.SetConnectionFailed(false);
-            this.ConnectionStatus = ConnectionStatus.Connected;
         }
 
         private void OnDisconnected(object sender, EventArgs e)
@@ -304,11 +345,6 @@ namespace OBSPlugin
         private void RestoreRecordingLocation()
         {
             this.SetRecordingLocation(this._previousRecordingInformation);
-        }
-
-        private void SetConnectionFailed(bool value)
-        {
-            if (value) this.ConnectionStatus = ConnectionStatus.Failed;
         }
 
         public void Dispose()
@@ -327,8 +363,8 @@ public record RecordingInformation(string Directory, string FilenameFormat)
 
 public enum ConnectionStatus
 {
-    Connected,
-    Connecting,
     Disconnected,
+    Connecting,
+    Connected,
     Failed,
 }

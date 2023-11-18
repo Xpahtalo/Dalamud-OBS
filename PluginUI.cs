@@ -29,6 +29,9 @@ namespace OBSPlugin
         private int UIErrorCount = 0;
         Blur[] PartyMemberBlurList = new Blur[8];
 
+        private readonly Vector4 _red = new(1, 0, 0, 1);
+        private readonly Vector4 _green = new(0, 1, 0, 1);
+
         public bool IsVisible { get; set; }
         public PluginUI(Plugin plugin)
         {
@@ -328,7 +331,7 @@ namespace OBSPlugin
             }
             try
             {
-                UpdateFridendList();
+                this.UpdateFriendList();
             }
             catch (Exception e)
             {
@@ -711,7 +714,7 @@ namespace OBSPlugin
             UpdateBlur(GetBlurFromNode(childNodeProfile, "CharacterProfile"));
         }
 
-        private unsafe void UpdateFridendList()
+        private unsafe void UpdateFriendList()
         {
             if (!Config.FriendListBlur) return;
             var friendListAddress = Plugin.GameGui.GetAddonByName("FriendList", 1);
@@ -770,9 +773,8 @@ namespace OBSPlugin
             {
                 Config.Save();
             }
-            ImGui.SameLine(ImGui.GetColumnWidth() - 80);
-            ImGui.TextColored(this.Obs.IsConnected ? new(0, 1, 0, 1) : new(1, 0, 0, 1),
-                this.Obs.IsConnected ? "Connected" : "Disconnected");
+            DrawStatus(Obs.IsConnected ? "Connected" : "Disconnected", Obs.IsConnected);
+        
             if (ImGui.InputText("Server Address", ref Config.Address, 128))
             {
                 Config.Save();
@@ -793,8 +795,9 @@ namespace OBSPlugin
                     Plugin.TryConnect(Config.Address, Config.Password);
                 }
             }
-            if (Plugin.ConnectionFailed)
+            if (Obs.ConnectionStatus == ConnectionStatus.Failed)
             {
+                using var _ = ImRaii.PushColor(ImGuiCol.Text, this._red);
                 ImGui.SameLine();
                 ImGui.Text("Authentication failed, check the address and password!");
             }
@@ -807,39 +810,21 @@ namespace OBSPlugin
             using var child = ImRaii.Child("Stream##SettingsRegion");
             if (!child) return;
 
-            string obsButtonText;
-
-            switch (this.Obs.StreamState)
+            string obsButtonText = this.Obs.StreamState switch
             {
-                case OutputState.Starting:
-                    obsButtonText = "Stream starting...";
-                    break;
-
-                case OutputState.Started:
-                    obsButtonText = "Stop streaming";
-                    break;
-
-                case OutputState.Stopping:
-                    obsButtonText = "Stream stopping...";
-                    break;
-
-                case OutputState.Stopped:
-                    obsButtonText = "Start streaming";
-                    break;
-
-                default:
-                    obsButtonText = "State unknown";
-                    break;
-            }
+                OutputState.Starting => "Starting Stream",
+                OutputState.Started  => "Stop Streaming",
+                OutputState.Stopping => "Stopping Stream",
+                OutputState.Stopped  => "Start Streaming",
+                _                    => "Streaming State Unknown"
+            };
 
             if (ImGui.Button(obsButtonText))
             {
                 this.Obs.TryToggleStreaming();
             }
+            DrawStatus(this.Obs.StreamState == OutputState.Started ? "Streaming" : "Stopped", this.Obs.StreamState == OutputState.Started);
 
-            ImGui.SameLine(ImGui.GetColumnWidth() - 80);
-            ImGui.TextColored(this.Obs.StreamState == OutputState.Started ? new(0, 1, 0, 1) : new(1, 0, 0, 1),
-                this.Obs.StreamState == OutputState.Started ? "Streaming" : "Stopped");
 
             if (this.Obs.StreamStatus == null) return;
 
@@ -875,10 +860,7 @@ namespace OBSPlugin
                 Plugin.SetRecordingInformation();
                 this.Obs.TryToggleRecording();
             }
-
-            ImGui.SameLine(ImGui.GetColumnWidth() - 80);
-            ImGui.TextColored(this.Obs.RecordState == OutputState.Started ? new(0, 1, 0, 1) : new(1, 0, 0, 1),
-                this.Obs.RecordState == OutputState.Started ? "Recording" : "Stopped");
+            DrawStatus(this.Obs.RecordState == OutputState.Started ? "Recording" : "Stopped", this.Obs.RecordState == OutputState.Started);
 
             if (ImGui.InputText("Recordings Directory", ref Config.RecordDir, 256, ImGuiInputTextFlags.EnterReturnsTrue))
             {
@@ -954,6 +936,25 @@ namespace OBSPlugin
             if (!tab) return;
             using var child = ImRaii.Child("Replay Buffer##SettingsRegion");
             if (!child) return;
+            
+            var replayButtonText = this.Obs.ReplayState switch
+            {
+                OutputState.Starting => "Starting Replay Buffer",
+                OutputState.Started  => "Stop Replay Buffer",
+                OutputState.Stopping => "Stopping Replay Buffer",
+                OutputState.Stopped  => "Start Replay Buffer",
+                _                    => "Replay Buffer State Unknown",
+            };
+
+            if (ImGui.Button(replayButtonText))
+            {
+                if (!this.Obs.IsConnected) return;
+
+                Plugin.SetRecordingInformation();
+                this.Obs.TryToggleReplayBuffer();
+            }
+            DrawStatus(this.Obs.ReplayState == OutputState.Started ? "Replay Buffering" : "Replay Buffer Stopped", this.Obs.ReplayState == OutputState.Started);
+            
             
             ImGui.Text("Replay buffer uses the same directory and filename settings as recording. You can edit them in that tab.");
             ImGui.Text($"Recordings directory: {Config.RecordDir}");
@@ -1217,27 +1218,7 @@ namespace OBSPlugin
                 }
                 Config.Save();
             }
-            /*
-            if (ImGui.Checkbox("NamePlate", ref Config.NamePlateBlur))
-            {
-                if (!Config.NamePlateBlur)
-                {
-                    OBSRemoveBlurs("NamePlate");
-                }
-                Config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Blurring NamePlate is not recommended.\n" +
-                    "This may cause severe performance issues.\n" +
-                    "It's better to turn off name plate in game or limit the number of blurs to <= 8.");
-            ImGui.SameLine();
-            if (ImGui.DragInt("Max", ref Config.MaxNamePlateCount, 1, 1, 50))
-            {
-                Config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Max number of nameplates to be blurred, sorted by the distance to the center.");
-            */
+
             if (Config.BlurAsync)
             {
                 ImGui.Separator();
@@ -1366,9 +1347,12 @@ namespace OBSPlugin
                     PluginLog.Error(ex, "Could not open OBS-websocket url");
                 }
             }
+        }
 
-
-
+        private void DrawStatus(string text, bool good)
+        {
+            ImGui.SameLine(ImGui.GetColumnWidth() - ImGui.CalcTextSize(text).X);
+            ImGui.TextColored(good ? this._green : this._red, text);
         }
         #endregion
 

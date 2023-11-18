@@ -54,7 +54,7 @@ namespace OBSPlugin
         [PluginService]
         [RequiredVersion("1.0")]
         internal IGameInteropProvider GameInteropProvider { get; init; }
-        
+
         [PluginService]
         [RequiredVersion("1.0")]
         internal IDutyState DutyState { get; init; }
@@ -66,10 +66,7 @@ namespace OBSPlugin
         internal readonly PluginCommandManager<Plugin> commandManager;
         internal Configuration config { get; private set; }
         internal readonly PluginUI ui;
-
         internal ObsService ObsService { get; }
-
-        public bool ConnectionFailed => ObsService.ConnectionStatus == ConnectionStatus.Failed;
 
         internal readonly StopWatchHook stopWatchHook;
         internal CombatState state;
@@ -114,7 +111,7 @@ namespace OBSPlugin
             DutyState.DutyCompleted += OnDutyCompleted;
             DutyState.DutyWiped += OnWipe;
         }
-        
+
         private void CountingDownChanged(object sender, EventArgs e)
         {
             if (!this.ObsService.IsConnected)
@@ -137,24 +134,24 @@ namespace OBSPlugin
             }
             this.lastCountdownValue = this.state.CountDownValue;
         }
-        
+
         private void InCombatChanged(object sender, EventArgs e)
         {
 
-                this.TryConnect(this.config.Address, this.config.Password);
+            this.TryConnect(this.config.Address, this.config.Password);
 
             if (this.state.InCombat && this.config.StartRecordOnCombat)
             {
-                    if (this.config.CancelStopRecordOnResume && this._stoppingRecord)
-                    {
-                        this._cts.Cancel();
-                    }
-                    else
-                    {
-                        this.PluginLog.Information("Auto start recording");
-                        this.SetRecordingInformation();
-                        this.ObsService.TryStartRecording();
-                    }
+                if (this.config.CancelStopRecordOnResume && this._stoppingRecord)
+                {
+                    this._cts.Cancel();
+                }
+                else
+                {
+                    this.PluginLog.Information("Auto start recording");
+                    this.SetRecordingInformation();
+                    this.ObsService.TryStartRecording();
+                }
             }
             else if (!this.state.InCombat && this.config.StopRecordOnCombat)
             {
@@ -218,10 +215,9 @@ namespace OBSPlugin
             this.ui.IsVisible = true;
         }
 
-        public bool TryConnect(string url, string password)
+        public void TryConnect(string url, string password)
         {
-            ObsService.TryConnect(url, password);
-            return ObsService.ConnectionStatus == ConnectionStatus.Connected;
+            this.ObsService.TryConnectAsync(url, password);
         }
 
         private void OnConnect(object sender, EventArgs e)
@@ -242,7 +238,7 @@ namespace OBSPlugin
                 this.ObsService.TryStartReplayBuffer();
             }
         }
-        
+
         private void OnDutyCompleted(object sender, ushort territoryId)
         {
             if (this.config.StopReplayBufferOnDutyExit)
@@ -250,7 +246,7 @@ namespace OBSPlugin
                 this.ObsService.TryStopReplayBuffer();
             }
         }
-        
+
         private void OnWipe(object sender, ushort territoryId)
         {
             if (this.config.TriggerReplayBufferOnWipe)
@@ -258,7 +254,7 @@ namespace OBSPlugin
                 this.ObsService.TryStopReplayBuffer();
             }
         }
-        
+
         [Command("/obs")]
         [HelpMessage("Open OBSPlugin config panel.")]
         public unsafe void ObsCommand(string command, string args)
@@ -302,7 +298,7 @@ namespace OBSPlugin
             PluginInterface.SavePluginConfig(this.config);
 
             PluginInterface.UiBuilder.Draw -= this.ui.Draw;
-            
+
             DutyState.DutyStarted -= OnDutyStarted;
             DutyState.DutyCompleted -= OnDutyCompleted;
             DutyState.DutyWiped -= OnWipe;
